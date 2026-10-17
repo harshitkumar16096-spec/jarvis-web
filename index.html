@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,7 +8,10 @@
 <title>JARVIS AI</title>
 
 <style>
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -17,88 +21,108 @@ body {
   display: flex;
   justify-content: center;
 }
+
 .app {
   width: 100%;
   max-width: 520px;
   padding: 28px 20px;
   text-align: center;
 }
+
 h1 {
   color: #55d8ff;
   letter-spacing: 8px;
   margin-top: 35px;
+  font-size: 42px;
 }
-.sub { color: #8caecb; }
+
+.sub {
+  color: #8caecb;
+}
+
 .orb {
   width: 180px;
   height: 180px;
   margin: 35px auto 20px;
   border: 2px solid #38cfff;
   border-radius: 50%;
-  box-shadow: 0 0 35px #0879b8, inset 0 0 30px #0879b8;
+  box-shadow: 0 0 35px #0879b8,
+              inset 0 0 30px #0879b8;
   display: grid;
   place-items: center;
   font-size: 65px;
 }
-.orb.active { animation: pulse 1.2s infinite alternate; }
-@keyframes pulse {
-  from { box-shadow: 0 0 20px #0879b8; }
-  to { box-shadow: 0 0 55px #38cfff; }
+
+.orb.active {
+  animation: pulse 1.2s infinite alternate;
 }
+
+@keyframes pulse {
+  from {
+    box-shadow: 0 0 20px #0879b8;
+  }
+  to {
+    box-shadow: 0 0 55px #38cfff;
+  }
+}
+
 button {
   border: 0;
   border-radius: 30px;
-  padding: 14px 22px;
-  margin: 7px;
+  padding: 15px 22px;
+  margin: 8px;
   font-size: 16px;
   font-weight: bold;
   cursor: pointer;
 }
-#mic { background: #37ceff; color: #04101d; }
-#stop { background: #24364d; color: white; }
-.panel {
-  margin-top: 22px;
-  padding: 16px;
-  border: 1px solid #1b4567;
-  border-radius: 15px;
-  text-align: left;
-  overflow-wrap: anywhere;
-  min-height: 75px;
-  background: #091528;
+
+#mic {
+  background: #37ceff;
+  color: #04101d;
 }
-.label { color: #55d8ff; font-size: 12px; }
-#status { color: #8caecb; margin: 15px; }
-  
-/* Hide JARVIS written reply */
-.panel:has(#reply) {
+
+#stop {
+  background: #24364d;
+  color: white;
+}
+
+#status {
+  color: #8caecb;
+  margin: 18px 0;
+  min-height: 24px;
+}
+
+/* Hide conversation text panels */
+.panel {
   display: none;
 }
-  
 </style>
 </head>
 
 <body>
 <main class="app">
+
   <h1>JARVIS</h1>
   <p class="sub">PERSONAL AI VOICE ASSISTANT</p>
 
   <div class="orb" id="orb">🎙️</div>
+
   <p id="status">Ready for your command</p>
 
   <button id="mic">🎙️ START LISTENING</button>
   <button id="stop">🔇 STOP</button>
 
   <div class="panel">
-    <div class="label">YOU SAID</div>
+    <div>YOU SAID</div>
     <p id="heard">Waiting for voice...</p>
   </div>
 
   <div class="panel">
-    <div class="label">JARVIS REPLY</div>
-    <p id="reply">Hello! I am ready.</p>
+    <div>JARVIS REPLY</div>
+    <p id="reply"></p>
   </div>
-</main>
 
+</main>
 
 <script>
 const API = "https://jarvis-web-api.onrender.com/chat";
@@ -109,79 +133,112 @@ const replyEl = document.getElementById("reply");
 const orb = document.getElementById("orb");
 
 const SpeechRecognition =
-  window.SpeechRecognition || window.webkitSpeechRecognition;
+  window.SpeechRecognition ||
+  window.webkitSpeechRecognition;
 
-let recognition;
+let recognition = null;
 let keepListening = false;
 let busy = false;
+let requestId = 0;
 
 function cleanText(text) {
-  return text
+  return String(text)
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
     .replace(/\*(.*?)\*/g, "$1")
-    .replace(/#{1,6}\s/g, "")
+    .replace(/#{1,6}\s*/g, "")
     .replace(/^\s*[-*]\s+/gm, "")
-    .replace(/^\s*\d+\.\s+/gm, "")
-    .replace(/\n{2,}/g, ". ")
+    .replace(/^\s*\d+[.)]\s+/gm, "")
+    .replace(/[*_#`]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
 function startRecognition() {
-  if (!keepListening || busy || !recognition) return;
+  if (!keepListening || busy || !recognition) {
+    return;
+  }
 
   try {
     recognition.start();
-  } catch (e) {
+  } catch (error) {
     // Recognition may already be starting.
   }
 }
 
-function speak(text) {
-  const message = cleanText(text);
-
-  if (!("speechSynthesis" in window)) {
-    statusEl.textContent = "Speech is not supported.";
+function speak(text, currentRequest) {
+  if (currentRequest !== requestId) {
     busy = false;
     return;
   }
 
-  speechSynthesis.cancel();
+  const message = cleanText(text);
+
+  if (!("speechSynthesis" in window)) {
+    busy = false;
+    statusEl.textContent = "Speech is not supported.";
+    return;
+  }
+
+  if (!message) {
+    busy = false;
+    statusEl.textContent = "No reply received.";
+    return;
+  }
+
+  window.speechSynthesis.cancel();
 
   const utterance = new SpeechSynthesisUtterance(message);
-  utterance.lang = "hi-IN";
-  utterance.rate = 1;
+
+  utterance.lang = /[\u0900-\u097F]/.test(message)
+    ? "hi-IN"
+    : "en-IN";
+
+  utterance.rate = 1.05;
+  utterance.pitch = 1;
   utterance.volume = 1;
 
   utterance.onstart = () => {
-    statusEl.textContent = "JARVIS is speaking...";
+    if (currentRequest === requestId) {
+      statusEl.textContent = "JARVIS is speaking...";
+    }
   };
 
   utterance.onend = () => {
+    if (currentRequest !== requestId) return;
+
     busy = false;
 
     if (keepListening) {
       statusEl.textContent = "Listening for your next command...";
-      setTimeout(startRecognition, 500);
+      setTimeout(startRecognition, 600);
     } else {
       statusEl.textContent = "Ready";
     }
   };
 
   utterance.onerror = () => {
+    if (currentRequest !== requestId) return;
+
     busy = false;
 
     if (keepListening) {
-      setTimeout(startRecognition, 500);
+      statusEl.textContent = "Ready for your next command";
+      setTimeout(startRecognition, 800);
+    } else {
+      statusEl.textContent = "Ready";
     }
   };
 
-  speechSynthesis.speak(utterance);
+  window.speechSynthesis.speak(utterance);
 }
 
 async function askJarvis(message) {
   busy = true;
+  const currentRequest = ++requestId;
+
   statusEl.textContent = "JARVIS is thinking...";
 
   try {
@@ -190,7 +247,14 @@ async function askJarvis(message) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ message })
+      body: JSON.stringify({
+        message:
+          "You are JARVIS, a friendly personal voice assistant. " +
+          "Answer in at most 2 short sentences and under 25 words. " +
+          "Be direct and natural. No markdown, headings, lists, " +
+          "or unnecessary explanations. Reply in the language " +
+          "the user speaks. User says: " + message
+      })
     });
 
     const data = await response.json();
@@ -199,21 +263,34 @@ async function askJarvis(message) {
       throw new Error(data.error || "Request failed");
     }
 
-    const answer = cleanText(data.reply || "I received no reply.");
+    if (currentRequest !== requestId) return;
 
-    replyEl.textContent = answer;
-    speak(answer);
+    const answer = cleanText(
+      data.reply || "Sorry, I have no answer right now."
+    );
+
+    // Keep the reply voice-only; do not display it.
+    speak(answer, currentRequest);
+
   } catch (error) {
-    replyEl.textContent = "I couldn't connect. Please try again.";
-    speak("Sorry, I couldn't connect. Please try again.");
+    if (currentRequest !== requestId) return;
+
+    speak(
+      "Sorry, I couldn't connect. Please try again.",
+      currentRequest
+    );
+
+    statusEl.textContent = "Connection problem";
   }
 }
 
 if (SpeechRecognition) {
   recognition = new SpeechRecognition();
+
   recognition.lang = "hi-IN";
   recognition.continuous = false;
   recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
 
   recognition.onstart = () => {
     orb.classList.add("active");
@@ -221,19 +298,28 @@ if (SpeechRecognition) {
   };
 
   recognition.onresult = event => {
-    const message = event.results[0][0].transcript.trim();
+    const message =
+      event.results[0][0].transcript.trim();
 
-    if (!message) return;
+    if (!message || busy) return;
 
     heardEl.textContent = message;
     askJarvis(message);
   };
 
   recognition.onerror = event => {
-    if (event.error === "not-allowed" ||
-        event.error === "service-not-allowed") {
+    orb.classList.remove("active");
+
+    if (
+      event.error === "not-allowed" ||
+      event.error === "service-not-allowed"
+    ) {
       keepListening = false;
       statusEl.textContent = "Please allow microphone access.";
+    } else if (event.error === "no-speech") {
+      statusEl.textContent = "Didn't hear anything. Listening again...";
+    } else {
+      statusEl.textContent = "Voice recognition issue";
     }
   };
 
@@ -241,16 +327,18 @@ if (SpeechRecognition) {
     orb.classList.remove("active");
 
     if (keepListening && !busy) {
-      setTimeout(startRecognition, 500);
+      setTimeout(startRecognition, 700);
     }
   };
+
 } else {
-  statusEl.textContent = "Please use a supported Chrome browser.";
+  statusEl.textContent =
+    "Voice recognition is unsupported in this browser.";
 }
 
 document.getElementById("mic").onclick = () => {
   if (!recognition) {
-    alert("Voice recognition is not supported.");
+    alert("Please use a supported Chrome browser.");
     return;
   }
 
@@ -261,14 +349,21 @@ document.getElementById("mic").onclick = () => {
 document.getElementById("stop").onclick = () => {
   keepListening = false;
   busy = false;
+  requestId++;
 
-  if (recognition) recognition.stop();
-  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  if (recognition) {
+    try {
+      recognition.stop();
+    } catch (error) {}
+  }
+
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
 
   orb.classList.remove("active");
   statusEl.textContent = "Stopped";
 };
 </script>
-  
 </body>
 </html>
