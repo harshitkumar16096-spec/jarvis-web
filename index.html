@@ -90,9 +90,9 @@ button {
   color: #8caecb;
   margin: 18px 0;
   min-height: 24px;
+  overflow-wrap: anywhere;
 }
 
-/* Hide conversation text panels */
 .panel {
   display: none;
 }
@@ -131,6 +131,8 @@ const statusEl = document.getElementById("status");
 const heardEl = document.getElementById("heard");
 const replyEl = document.getElementById("reply");
 const orb = document.getElementById("orb");
+const micButton = document.getElementById("mic");
+const stopButton = document.getElementById("stop");
 
 const SpeechRecognition =
   window.SpeechRecognition ||
@@ -140,9 +142,10 @@ let recognition = null;
 let keepListening = false;
 let busy = false;
 let requestId = 0;
+let restartTimer = null;
 
 function cleanText(text) {
-  return String(text)
+  return String(text || "")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\*\*(.*?)\*\*/g, "$1")
@@ -164,27 +167,34 @@ function startRecognition() {
   try {
     recognition.start();
   } catch (error) {
-    // Recognition may already be starting.
+    console.warn("Recognition start:", error.message);
+  }
+}
+
+function scheduleRecognition(delay = 700) {
+  clearTimeout(restartTimer);
+
+  if (keepListening && !busy) {
+    restartTimer = setTimeout(startRecognition, delay);
   }
 }
 
 function speak(text, currentRequest) {
-  if (currentRequest !== requestId) {
-    busy = false;
-    return;
-  }
+  if (currentRequest !== requestId) return;
 
   const message = cleanText(text);
 
-  if (!("speechSynthesis" in window)) {
+  if (!message) {
     busy = false;
-    statusEl.textContent = "Speech is not supported.";
+    statusEl.textContent = "JARVIS received an empty reply.";
+    scheduleRecognition();
     return;
   }
 
-  if (!message) {
+  if (!("speechSynthesis" in window)) {
     busy = false;
-    statusEl.textContent = "No reply received.";
+    statusEl.textContent = "Text-to-speech is unsupported.";
+    scheduleRecognition();
     return;
   }
 
@@ -213,29 +223,28 @@ function speak(text, currentRequest) {
 
     if (keepListening) {
       statusEl.textContent = "Listening for your next command...";
-      setTimeout(startRecognition, 600);
+      scheduleRecognition(700);
     } else {
       statusEl.textContent = "Ready";
     }
   };
 
-  utterance.onerror = () => {
+  utterance.onerror = event => {
     if (currentRequest !== requestId) return;
 
+    console.error("Speech error:", event.error);
     busy = false;
+    statusEl.textContent = "Voice playback failed.";
 
-    if (keepListening) {
-      statusEl.textContent = "Ready for your next command";
-      setTimeout(startRecognition, 800);
-    } else {
-      statusEl.textContent = "Ready";
-    }
+    scheduleRecognition(900);
   };
 
   window.speechSynthesis.speak(utterance);
 }
 
 async function askJarvis(message) {
+  if (!message || busy) return;
+
   busy = true;
   const currentRequest = ++requestId;
 
@@ -257,30 +266,75 @@ async function askJarvis(message) {
       })
     });
 
-    const data = await response.json();
+    const responseText = await response.text();
+
+    let data;
+
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      throw new Error(
+        "Server returned an invalid response (HTTP " +
+        response.status + ")."
+      );
+    }
 
     if (!response.ok) {
-      throw new Error(data.error || "Request failed");
+      throw new Error(
+        data.error ||
+        "Server returned HTTP " + response.status
+      );
     }
 
     if (currentRequest !== requestId) return;
 
-    const answer = cleanText(
-      data.reply || "Sorry, I have no answer right now."
-    );
+    if (typeof data.reply !== "string" || !data.reply.trim()) {
+      throw new Error("The AI returned an empty reply.");
+    }
 
-    // Keep the reply voice-only; do not display it.
+    const answer = cleanText(data.reply);
+
+    // Keep the existing voice-only interface.
+    replyEl.textContent = answer;
     speak(answer, currentRequest);
 
   } catch (error) {
     if (currentRequest !== requestId) return;
 
-    speak(
-      "Sorry, I couldn't connect. Please try again.",
-      currentRequest
+    console.error("JARVIS request failed:", error);
+
+    busy = false;
+
+    const details = error.message || "Unknown error";
+
+    if (error instanceof TypeError) {
+      statusEl.textContent =
+        "Network/CORS error. Check browser console and Render logs.";
+    } else {
+      statusEl.textContent = "JARVIS error: " + details;
+    }
+
+    // Speak a short error message without hiding the status.
+    const utterance = new SpeechSynthesisUtterance(
+      "Sorry, I could not get an answer. Please check the connection."
     );
 
-    statusEl.textContent = "Connection problem";
+    utterance.lang = "en-IN";
+
+    utterance.onend = () => {
+      if (currentRequest !== requestId) return;
+
+      if (keepListening) {
+        scheduleRecognition(700);
+      }
+    };
+
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    } else {
+      scheduleRecognition();
+    }
   }
 }
 
@@ -309,6 +363,7 @@ if (SpeechRecognition) {
 
   recognition.onerror = event => {
     orb.classList.remove("active");
+    console.error("Recognition error:", event.error);
 
     if (
       event.error === "not-allowed" ||
@@ -317,9 +372,13 @@ if (SpeechRecognition) {
       keepListening = false;
       statusEl.textContent = "Please allow microphone access.";
     } else if (event.error === "no-speech") {
-      statusEl.textContent = "Didn't hear anything. Listening again...";
-    } else {
-      statusEl.textContent = "Voice recognition issue";
+      statusEl.textContent = "Didn't hear anything. Try again...";
+    } else if (event.error === "network") {
+      statusEl.textContent =
+        "Voice recognition network error. Check internet.";
+    } else if (event.error !== "aborted") {
+      statusEl.textContent =
+        "Voice recognition error: " + event.error;
     }
   };
 
@@ -327,16 +386,16 @@ if (SpeechRecognition) {
     orb.classList.remove("active");
 
     if (keepListening && !busy) {
-      setTimeout(startRecognition, 700);
+      scheduleRecognition(700);
     }
   };
 
 } else {
   statusEl.textContent =
-    "Voice recognition is unsupported in this browser.";
+    "Voice recognition is unsupported. Try Chrome.";
 }
 
-document.getElementById("mic").onclick = () => {
+micButton.onclick = () => {
   if (!recognition) {
     alert("Please use a supported Chrome browser.");
     return;
@@ -346,10 +405,12 @@ document.getElementById("mic").onclick = () => {
   startRecognition();
 };
 
-document.getElementById("stop").onclick = () => {
+stopButton.onclick = () => {
   keepListening = false;
   busy = false;
   requestId++;
+
+  clearTimeout(restartTimer);
 
   if (recognition) {
     try {
