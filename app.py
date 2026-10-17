@@ -5,6 +5,7 @@ from google import genai
 from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app, origins=["https://harshitkumar16096-spec.github.io"])
 
 @app.route("/", methods=["GET"])
 def home():
