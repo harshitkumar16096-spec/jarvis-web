@@ -93,6 +93,7 @@ button {
   </div>
 </main>
 
+
 <script>
 const API = "https://jarvis-web-api.onrender.com/chat";
 
@@ -105,47 +106,84 @@ const SpeechRecognition =
   window.SpeechRecognition || window.webkitSpeechRecognition;
 
 let recognition;
-let listening = false;
+let keepListening = false;
+let busy = false;
 
+function cleanText(text) {
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/#{1,6}\s/g, "")
+    .replace(/^\s*[-*]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/\n{2,}/g, ". ")
+    .trim();
+}
+
+function startRecognition() {
+  if (!keepListening || busy || !recognition) return;
+
+  try {
+    recognition.start();
+  } catch (e) {
+    // Recognition may already be starting.
+  }
+}
 
 function speak(text) {
+  const message = cleanText(text);
+
   if (!("speechSynthesis" in window)) {
-    statusEl.textContent = "Voice not supported in this browser";
+    statusEl.textContent = "Speech is not supported.";
+    busy = false;
     return;
   }
 
-  window.speechSynthesis.cancel();
+  speechSynthesis.cancel();
 
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "en-IN";
-  utterance.rate = 0.95;
+  const utterance = new SpeechSynthesisUtterance(message);
+  utterance.lang = "hi-IN";
+  utterance.rate = 1;
   utterance.volume = 1;
-  utterance.pitch = 1;
 
   utterance.onstart = () => {
     statusEl.textContent = "JARVIS is speaking...";
   };
 
   utterance.onend = () => {
-    statusEl.textContent = "Ready for your command";
+    busy = false;
+
+    if (keepListening) {
+      statusEl.textContent = "Listening for your next command...";
+      setTimeout(startRecognition, 500);
+    } else {
+      statusEl.textContent = "Ready";
+    }
   };
 
-  utterance.onerror = (event) => {
-    statusEl.textContent = "Voice error: " + event.error;
+  utterance.onerror = () => {
+    busy = false;
+
+    if (keepListening) {
+      setTimeout(startRecognition, 500);
+    }
   };
 
-  window.speechSynthesis.resume();
-  window.speechSynthesis.speak(utterance);
+  speechSynthesis.speak(utterance);
 }
-  
 
 async function askJarvis(message) {
+  busy = true;
   statusEl.textContent = "JARVIS is thinking...";
 
   try {
     const response = await fetch(API, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json"
+      },
       body: JSON.stringify({ message })
     });
 
@@ -155,68 +193,76 @@ async function askJarvis(message) {
       throw new Error(data.error || "Request failed");
     }
 
-    const answer = data.reply || "I received an empty reply.";
+    const answer = cleanText(data.reply || "I received no reply.");
+
     replyEl.textContent = answer;
-    statusEl.textContent = "Reply received";
     speak(answer);
   } catch (error) {
-    statusEl.textContent = "Connection error. Please try again.";
-    replyEl.textContent = error.message;
+    replyEl.textContent = "I couldn't connect. Please try again.";
+    speak("Sorry, I couldn't connect. Please try again.");
   }
 }
 
 if (SpeechRecognition) {
   recognition = new SpeechRecognition();
-  recognition.lang = "en-IN";
+  recognition.lang = "hi-IN";
   recognition.continuous = false;
   recognition.interimResults = false;
 
   recognition.onstart = () => {
-    listening = true;
     orb.classList.add("active");
     statusEl.textContent = "Listening... Speak now";
   };
 
   recognition.onresult = event => {
-    const message = event.results[0][0].transcript;
+    const message = event.results[0][0].transcript.trim();
+
+    if (!message) return;
+
     heardEl.textContent = message;
     askJarvis(message);
   };
 
   recognition.onerror = event => {
-    statusEl.textContent = "Mic error: " + event.error;
+    if (event.error === "not-allowed" ||
+        event.error === "service-not-allowed") {
+      keepListening = false;
+      statusEl.textContent = "Please allow microphone access.";
+    }
   };
 
   recognition.onend = () => {
-    listening = false;
     orb.classList.remove("active");
+
+    if (keepListening && !busy) {
+      setTimeout(startRecognition, 500);
+    }
   };
 } else {
-  statusEl.textContent =
-    "Voice recognition is unsupported in this browser.";
+  statusEl.textContent = "Please use a supported Chrome browser.";
 }
 
 document.getElementById("mic").onclick = () => {
   if (!recognition) {
-    alert("Please open this page in a supported Chrome browser.");
+    alert("Voice recognition is not supported.");
     return;
   }
 
-  if (!listening) {
-    try {
-      recognition.start();
-    } catch (error) {
-      statusEl.textContent = "Please try again.";
-    }
-  }
+  keepListening = true;
+  startRecognition();
 };
 
 document.getElementById("stop").onclick = () => {
-  if (recognition && listening) recognition.stop();
+  keepListening = false;
+  busy = false;
+
+  if (recognition) recognition.stop();
   if ("speechSynthesis" in window) speechSynthesis.cancel();
-  statusEl.textContent = "Stopped";
+
   orb.classList.remove("active");
+  statusEl.textContent = "Stopped";
 };
 </script>
+  
 </body>
 </html>
