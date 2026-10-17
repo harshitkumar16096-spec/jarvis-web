@@ -107,15 +107,37 @@ const SpeechRecognition =
 let recognition;
 let listening = false;
 
-function speak(text) {
-  if (!("speechSynthesis" in window)) return;
 
-  speechSynthesis.cancel();
+function speak(text) {
+  if (!("speechSynthesis" in window)) {
+    statusEl.textContent = "Voice not supported in this browser";
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "en-IN";
-  utterance.rate = 1;
-  speechSynthesis.speak(utterance);
+  utterance.rate = 0.95;
+  utterance.volume = 1;
+  utterance.pitch = 1;
+
+  utterance.onstart = () => {
+    statusEl.textContent = "JARVIS is speaking...";
+  };
+
+  utterance.onend = () => {
+    statusEl.textContent = "Ready for your command";
+  };
+
+  utterance.onerror = (event) => {
+    statusEl.textContent = "Voice error: " + event.error;
+  };
+
+  window.speechSynthesis.resume();
+  window.speechSynthesis.speak(utterance);
 }
+  
 
 async function askJarvis(message) {
   statusEl.textContent = "JARVIS is thinking...";
